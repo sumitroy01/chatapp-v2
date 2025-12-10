@@ -1,11 +1,11 @@
 // src/pages/AuthPage.jsx
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import authStore from "../store/auth.store.js";
 
-import LoginForm from "../components/auth/LoginForm.jsx"
+import LoginForm from "../components/auth/LoginForm.jsx";
 import SignupForm from "../components/auth/SignupForm.jsx";
-import ForgotPasswordForm from "../components/auth/ForgotPasswordForm.jsx"
+import ForgotPasswordForm from "../components/auth/ForgotPasswordForm.jsx";
 import ResetPasswordForm from "../components/auth/ResetPasswordForm.jsx";
 import VerifyAccountForm from "../components/auth/VerifyAccountForm.jsx";
 
@@ -23,9 +23,17 @@ function AuthPage({ initialMode = "login", onBackToLanding }) {
     verficationPendingId,
   } = authStore();
 
+  // main mode state
   const [mode, setMode] = useState(
     verficationPendingId ? "verify" : initialMode
   );
+
+  // keep mode in sync with initialMode when NOT verifying
+  useEffect(() => {
+    if (!verficationPendingId) {
+      setMode(initialMode);
+    }
+  }, [initialMode, verficationPendingId]);
 
   const [resetEmail, setResetEmail] = useState("");
 

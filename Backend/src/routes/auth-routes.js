@@ -8,6 +8,7 @@ import {
   requestResetPassword,
   resetPassword,
   verifyUser,
+  resendOtp,
   
 } from "../controllers/auth-controllers.js";
 
@@ -19,12 +20,12 @@ router.post("/login", logIn);
 router.post("/logout", protectRoute, logOut);
 router.get("/check", protectRoute, checkAuth);
 
+router.post("/resend-otp",resendOtp);
 
 router.post("/verify-user", verifyUser); 
 
 // password reset 
 router.post("/password/request-reset", requestResetPassword); 
 router.post("/password/reset", resetPassword);               
- 
 
 export default router;

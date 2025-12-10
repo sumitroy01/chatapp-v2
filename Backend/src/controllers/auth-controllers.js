@@ -1,7 +1,7 @@
 import bcrypt from "bcrypt";
 import dotenv from "dotenv";
 import { generateToken } from "../utils/token-utils.js";
-import{ sendOtp }from "../utils/email-utils.js";
+import { sendOtp } from "../utils/email-utils.js";
 import Users from "../models/user-models.js";
 
 dotenv.config();
@@ -16,7 +16,10 @@ export const signUp = async (req, res) => {
   try {
     let { name, userName, email, password } = req.body;
 
-    // Make username optional (trim it)
+    // normalize email + username
+    if (email) {
+      email = email.trim().toLowerCase();
+    }
     userName = userName ? userName.trim() : "";
 
     // username is NOT mandatory anymore
@@ -33,12 +36,23 @@ export const signUp = async (req, res) => {
     }
 
     // check existing by email (verified or not)
-    const myUser = await Users.findOne({ email }).select(
+    let myUser = await Users.findOne({ email }).select(
       "+otp +otpExpires +lastOtpSent"
     );
 
     if (myUser && myUser.isVerified) {
       return res.status(409).json({ message: "user already exists" });
+    }
+
+    // if unverified and OTP expired → delete user so they can start fresh
+    if (myUser && !myUser.isVerified) {
+      const isExpired =
+        !myUser.otpExpires || Date.now() > myUser.otpExpires.getTime();
+
+      if (isExpired) {
+        await Users.deleteOne({ _id: myUser._id });
+        myUser = null; // treat as new user below
+      }
     }
 
     // unique username check ONLY if userName is provided
@@ -55,7 +69,7 @@ export const signUp = async (req, res) => {
       }
     }
 
-    // rate limit OTP resend for unverified
+    // rate limit OTP resend for unverified (and not expired – expired got deleted above)
     if (myUser && !myUser.isVerified) {
       if (
         myUser.lastOtpSent &&
@@ -76,8 +90,8 @@ export const signUp = async (req, res) => {
     let myNewUser;
 
     if (myUser && !myUser.isVerified) {
+      // update existing unverified user
       myUser.name = name;
-      // only update username if user sent one
       if (userName) {
         myUser.userName = userName;
       }
@@ -90,6 +104,7 @@ export const signUp = async (req, res) => {
       }
       myNewUser = myUser;
     } else {
+      // create new user
       const newUserData = {
         name,
         email,
@@ -100,7 +115,6 @@ export const signUp = async (req, res) => {
         lastOtpSent: new Date(),
       };
 
-      // only set userName field if provided
       if (userName) {
         newUserData.userName = userName;
       }
@@ -120,8 +134,8 @@ export const signUp = async (req, res) => {
     }
 
     try {
-      const email=myNewUser.email;
-      await sendOtp(email, otp);
+      const emailToSend = myNewUser.email;
+      await sendOtp(emailToSend, otp);
     } catch (error) {
       console.log("error while sending email", error.message || error);
       return res
@@ -148,7 +162,9 @@ export const resendOtp = async (req, res) => {
       return res.status(400).json({ message: "invalid user" });
     }
 
-    const myUser = await Users.findById(userId).select("+otp +otpExpires +lastOtpSent +email");
+    const myUser = await Users.findById(userId).select(
+      "+otp +otpExpires +lastOtpSent +email"
+    );
 
     if (!myUser) {
       return res.status(404).json({ message: "user not found" });
@@ -158,8 +174,24 @@ export const resendOtp = async (req, res) => {
       return res.status(400).json({ message: "user is already verified" });
     }
 
-    if (myUser.lastOtpSent && Date.now() - myUser.lastOtpSent.getTime() < RESEND_CD) {
-      return res.status(429).json({ message: "please wait before requesting a new otp" });
+    // if otp expired for an unverified user → delete and force re-signup
+    if (
+      !myUser.otpExpires ||
+      Date.now() > new Date(myUser.otpExpires).getTime()
+    ) {
+      await Users.deleteOne({ _id: myUser._id });
+      return res
+        .status(410)
+        .json({ message: "otp expired, please sign up again" });
+    }
+
+    if (
+      myUser.lastOtpSent &&
+      Date.now() - myUser.lastOtpSent.getTime() < RESEND_CD
+    ) {
+      return res
+        .status(429)
+        .json({ message: "please wait before requesting a new otp" });
     }
 
     const otp = genOtp();
@@ -173,7 +205,9 @@ export const resendOtp = async (req, res) => {
       await sendOtp(myUser.email, otp);
     } catch (error) {
       console.log("error while sending otp (resend)", error.message || error);
-      return res.status(500).json({ message: "could not resend otp at the moment" });
+      return res
+        .status(500)
+        .json({ message: "could not resend otp at the moment" });
     }
 
     return res.status(200).json({ message: "otp resent successfully" });
@@ -185,10 +219,14 @@ export const resendOtp = async (req, res) => {
 
 export const verifyUser = async (req, res) => {
   try {
-    const { email, userId, otp } = req.body;
+    let { email, userId, otp } = req.body;
 
     if ((!userId && !email) || !otp) {
       return res.status(400).json({ message: "invalid user" });
+    }
+
+    if (email) {
+      email = email.trim().toLowerCase();
     }
 
     let myCurrentUser;
@@ -211,7 +249,13 @@ export const verifyUser = async (req, res) => {
       !myCurrentUser.otpExpires ||
       Date.now() > new Date(myCurrentUser.otpExpires).getTime()
     ) {
-      return res.status(422).json({ message: "please regenerate otp" });
+      // otp expired for unverified user → delete and force re-signup
+      if (!myCurrentUser.isVerified) {
+        await Users.deleteOne({ _id: myCurrentUser._id });
+      }
+      return res
+        .status(422)
+        .json({ message: "otp expired, please sign up again" });
     }
 
     const otpMatch = await bcrypt.compare(otp.toString(), myCurrentUser.otp);
@@ -273,7 +317,7 @@ export const logIn = async (req, res) => {
       return res.status(404).json({ message: "user not found" });
     }
 
-    // (optional but common) block login if not verified
+    // block login if not verified
     if (!myUser.isVerified) {
       return res.status(403).json({
         message: "please verify your account before logging in",
@@ -335,21 +379,31 @@ export const checkAuth = async (req, res) => {
     return res.status(500).json({ message: "internal server error" });
   }
 };
+
 export const requestResetPassword = async (req, res) => {
   try {
-    const { email } = req.body;  
+    let { email } = req.body;
 
     if (!email) {
       return res.status(400).json({ message: "email is required" });
     }
 
-    const myUser = await Users.findOne({ email }).select("+otp +otpExpires +lastOtpSent");
+    email = email.trim().toLowerCase();
+
+    const myUser = await Users.findOne({ email }).select(
+      "+otp +otpExpires +lastOtpSent"
+    );
     if (!myUser) {
       return res.status(404).json({ message: "user doesn't exist" });
     }
 
-    if (myUser.lastOtpSent && Date.now() - myUser.lastOtpSent.getTime() < RESEND_CD) {
-      return res.status(429).json({ message: "please wait before requesting a new otp" });
+    if (
+      myUser.lastOtpSent &&
+      Date.now() - myUser.lastOtpSent.getTime() < RESEND_CD
+    ) {
+      return res
+        .status(429)
+        .json({ message: "please wait before requesting a new otp" });
     }
 
     const otp = genOtp();
@@ -363,25 +417,36 @@ export const requestResetPassword = async (req, res) => {
       await sendOtp(email, otp);
     } catch (error) {
       console.log("error in email service", error.message || error);
-      return res.status(500).json({ message: "could not send otp at the moment" });
+      return res
+        .status(500)
+        .json({ message: "could not send otp at the moment" });
     }
 
     return res.status(200).json({ message: "reset request sent successfully" });
   } catch (error) {
-    console.log("error in password reset request controller", error.message || error);
+    console.log(
+      "error in password reset request controller",
+      error.message || error
+    );
     return res.status(500).json({ message: "internal server error" });
   }
 };
 
 export const resetPassword = async (req, res) => {
   try {
-    const { email, otp, password } = req.body;
+    let { email, otp, password } = req.body;
 
     if (!email || !otp || !password) {
-      return res.status(400).json({ message: "please enter the required fields" });
+      return res
+        .status(400)
+        .json({ message: "please enter the required fields" });
     }
 
-    const myUser = await Users.findOne({ email }).select("+otp +otpExpires +password");
+    email = email.trim().toLowerCase();
+
+    const myUser = await Users.findOne({ email }).select(
+      "+otp +otpExpires +password"
+    );
     if (!myUser) {
       return res.status(404).json({ message: "user not found" });
     }
