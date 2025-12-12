@@ -1,5 +1,5 @@
 // src/App.jsx
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Toaster } from "react-hot-toast";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -12,6 +12,9 @@ import LoggedOutHome from "./pages/LoggedOutHome";
 import ChatPage from "./pages/ChatPage";
 import AuthPage from "./pages/AuthPage.jsx";
 import ProfileSettings from "./pages/ProfileSettings.jsx";
+
+// Make sure you have an exported initSocket that returns the socket instance
+import { initSocket } from "./socket.js";
 
 function FullScreenLoader() {
   return (
@@ -45,16 +48,45 @@ function FullScreenLoader() {
 }
 
 function App() {
-  const { authUser, isCheckingAuth, checkAuth,logOut } = authStore();
+  const { authUser, isCheckingAuth, checkAuth, logOut } = authStore();
 
   const [showAuth, setShowAuth] = useState(false);
   const [authMode, setAuthMode] = useState("login"); // "login" | "signup"
   const [activeView, setActiveView] = useState("chat"); // "chat" | "settings"
 
-  // Check auth on mount
+  // BOOT: run once on mount — check auth and init socket if authenticated.
   useEffect(() => {
-    checkAuth();
-  }, [checkAuth]);
+    let socket; // keep reference so we can cleanup
+    let mounted = true;
+
+    const boot = async () => {
+      try {
+        // checkAuth may update auth store; await it so we know the result
+        const user = await checkAuth();
+        if (!mounted) return;
+
+        if (user) {
+          // only init once; ensure initSocket returns the socket instance
+          socket = initSocket(import.meta.env.VITE_BACKEND_URL);
+        }
+      } catch (err) {
+        // optionally handle/log
+        console.error("boot error:", err);
+      }
+    };
+
+    boot();
+
+    // cleanup on unmount
+    return () => {
+      mounted = false;
+      if (socket && typeof disconnectSocket === "function") {
+        disconnectSocket(); // or socket.disconnect()
+      }
+    };
+    // only run on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // intentionally empty so we run boot once
 
   // When authUser changes, load profile + chats
   useEffect(() => {
@@ -62,13 +94,15 @@ function App() {
       // 1) call myUser from userstore
       const { myUser } = userstore.getState();
       if (typeof myUser === "function") {
-        myUser();
+        myUser().catch((e) => console.error("myUser failed", e));
       }
 
       // 2) call fetchChats from chatstore
       const { fetchChats, page, limit } = chatstore.getState();
       if (typeof fetchChats === "function") {
-        fetchChats(page || 1, limit || 50);
+        fetchChats(page || 1, limit || 50).catch((e) =>
+          console.error("fetchChats failed", e)
+        );
       }
 
       setShowAuth(false);
@@ -77,6 +111,7 @@ function App() {
       // reset view when logged out
       setActiveView("chat");
     }
+    // only depends on authUser
   }, [authUser]);
 
   const openAuth = (mode) => {
@@ -131,10 +166,7 @@ function App() {
               exit={{ opacity: 0, y: -8 }}
               transition={{ duration: 0.25, ease: "easeOut" }}
             >
-              <AuthPage
-                initialMode={authMode}
-                onBackToLanding={backToLanding}
-              />
+              <AuthPage initialMode={authMode} onBackToLanding={backToLanding} />
             </motion.div>
           ) : (
             <motion.div

@@ -37,8 +37,8 @@ const chatstore = create((set, get) => ({
   setSelectedChat: (chat) => {
     set({ selectedChat: normalizeChat(chat) });
   },
-
   fetchChats: async (page, limit) => {
+    // set fetching immediately
     set({ isFetchingChats: true });
     try {
       const currentPage = page || get().page;
@@ -49,29 +49,54 @@ const chatstore = create((set, get) => ({
           page: currentPage,
           limit: currentLimit,
         },
+        // Accept 200 and 304 (so 304 ends up in `res`, not in `catch`)
+        validateStatus: (status) => status === 200 || status === 304,
+        // optional while debugging server caching - remove in prod if you want
+        headers: { "Cache-Control": "no-cache" },
       });
 
-      const rawData = res.data?.data || [];
-      const data = rawData.map(normalizeChat);
+      // If server returned 200, we got body; if 304, server says "no change"
+      if (res.status === 200) {
+        const rawData = res.data?.data || [];
+        const data = rawData.map(normalizeChat);
 
-      const newPage = res.data?.page || currentPage;
-      const newLimit = res.data?.limit || currentLimit;
-      const prevChats = currentPage === 1 ? [] : get().chats;
+        const newPage = res.data?.page || currentPage;
+        const newLimit = res.data?.limit || currentLimit;
+        const prevChats = currentPage === 1 ? [] : get().chats;
+        const merged = [...prevChats, ...data];
 
-      const merged = [...prevChats, ...data];
+        set({
+          chats: merged,
+          page: newPage,
+          limit: newLimit,
+          hasMore: data.length === newLimit,
+        });
+      } else if (res.status === 304) {
+        // No change on server. Important: do NOT throw — treat as successful no-op.
+        // But update pagination flags so the UI doesn't keep retrying blindly.
+        // Keep existing chats in store.
+        const newPage = res.data?.page || currentPage;
+        const newLimit = res.data?.limit || currentLimit;
 
-      set({
-        chats: merged,
-        page: newPage,
-        limit: newLimit,
-        hasMore: data.length === newLimit,
-      });
+        // Optionally: if page === 1 and we have zero chats client-side,
+        // you might want to treat it as "no chats" (empty array).
+        // Here we keep existing chats (likely empty) and update hasMore conservatively:
+        set({
+          page: newPage,
+          limit: newLimit,
+          // If server says no-change, assume no more pages for safety.
+          // Adjust if your server provides better meta on 304 responses.
+          hasMore: false,
+        });
+
+        // debug
+        console.debug("fetchChats: 304 Not Modified - no changes applied");
+      }
     } catch (error) {
       console.log("error in fetchChats:", error?.response?.data || error);
-      toast.error(
-        error?.response?.data?.message || "failed to load chats"
-      );
+      toast.error(error?.response?.data?.message || "failed to load chats");
     } finally {
+      // ALWAYS clear the fetching flag
       set({ isFetchingChats: false });
     }
   },
@@ -95,9 +120,7 @@ const chatstore = create((set, get) => ({
       });
     } catch (error) {
       console.log("error in accessChat:", error?.response?.data || error);
-      toast.error(
-        error?.response?.data?.message || "failed to access chat"
-      );
+      toast.error(error?.response?.data?.message || "failed to access chat");
     } finally {
       set({ isAccessingChat: false });
     }
@@ -138,13 +161,8 @@ const chatstore = create((set, get) => ({
 
       toast.success("group created sucessfully");
     } catch (error) {
-      console.log(
-        "error in createGroupChat:",
-        error?.response?.data || error
-      );
-      toast.error(
-        error?.response?.data?.message || "failed to create group"
-      );
+      console.log("error in createGroupChat:", error?.response?.data || error);
+      toast.error(error?.response?.data?.message || "failed to create group");
     } finally {
       set({ isCreatingGroup: false });
     }
@@ -198,9 +216,7 @@ const chatstore = create((set, get) => ({
       toast.success("group renamed sucessfully");
     } catch (error) {
       console.log("error in renameGroup:", error?.response?.data || error);
-      toast.error(
-        error?.response?.data?.message || "failed to rename group"
-      );
+      toast.error(error?.response?.data?.message || "failed to rename group");
     } finally {
       set({ isRenamingGroup: false });
     }
@@ -235,9 +251,7 @@ const chatstore = create((set, get) => ({
       toast.success("user added to group");
     } catch (error) {
       console.log("error in addToGroup:", error?.response?.data || error);
-      toast.error(
-        error?.response?.data?.message || "failed to add user"
-      );
+      toast.error(error?.response?.data?.message || "failed to add user");
     } finally {
       set({ isUpdatingGroup: false });
     }
@@ -283,13 +297,8 @@ const chatstore = create((set, get) => ({
 
       toast.success("user removed from group");
     } catch (error) {
-      console.log(
-        "error in removeFromGroup:",
-        error?.response?.data || error
-      );
-      toast.error(
-        error?.response?.data?.message || "failed to remove user"
-      );
+      console.log("error in removeFromGroup:", error?.response?.data || error);
+      toast.error(error?.response?.data?.message || "failed to remove user");
     } finally {
       set({ isUpdatingGroup: false });
     }
@@ -316,14 +325,11 @@ const chatstore = create((set, get) => ({
       toast.success("chat deleted");
     } catch (error) {
       console.log("error in deleteChat:", error?.response?.data || error);
-      toast.error(
-        error?.response?.data?.message || "failed to delete chat"
-      );
+      toast.error(error?.response?.data?.message || "failed to delete chat");
     } finally {
       set({ isDeletingChat: false });
     }
   },
-
 }));
 
 export default chatstore;

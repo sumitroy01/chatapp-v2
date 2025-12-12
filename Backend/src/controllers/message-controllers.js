@@ -1,14 +1,13 @@
 // controllers/message-controller.js
-
 import Messages from "../models/message-models.js";
 import Chats from "../models/chat-models.js";
 import { v2 as cloudinary } from "cloudinary";
-// controllers/message-controller.js
+import { emitToRoom, emitToUser } from "../sockets/socket.js"; // <- added
 
 export const getMessagesForChat = async (req, res) => {
   try {
     const { chatId } = req.params;
-    const { page = 1, limit = 50, sort = "asc" } = req.query; // 👈 change "desc" → "asc"
+    const { page = 1, limit = 50, sort = "asc" } = req.query;
 
     if (!chatId) {
       return res.status(400).json({ message: "chatId required" });
@@ -21,7 +20,7 @@ export const getMessagesForChat = async (req, res) => {
     const sortOrder = sort === "asc" ? 1 : -1;
 
     const messages = await Messages.find({ chat: chatId })
-      .sort({ createdAt: sortOrder }) // asc -> oldest first
+      .sort({ createdAt: sortOrder })
       .skip(skip)
       .limit(limitNum)
       .populate("sender", "-password")
@@ -39,6 +38,7 @@ export const getMessagesForChat = async (req, res) => {
       .json({ message: "Server error", error: err.message });
   }
 };
+
 export const sendMessage = async (req, res) => {
   try {
     const body = req.body || {};
@@ -116,6 +116,16 @@ export const sendMessage = async (req, res) => {
       console.log("failed to update latestMessage on chat:", err.message);
     }
 
+    // --- ADDITION: notify socket clients so real-time UIs get this message ---
+    try {
+      emitToRoom(chatId, "message", fullMessage.toObject());
+      emitToUser(String(receiverId), "message", fullMessage.toObject());
+    } catch (e) {
+      // Non-fatal: log but continue returning success to REST client
+      console.warn("warning: emit to socket failed:", e?.message || e);
+    }
+    // ------------------------------------------------------------------------
+
     return res.status(201).json(fullMessage);
   } catch (err) {
     console.error("error in sendMessage:", err);
@@ -124,6 +134,7 @@ export const sendMessage = async (req, res) => {
       .json({ message: "Server error", error: err.message });
   }
 };
+
 // PUT /api/message/read
 export const markMessagesRead = async (req, res) => {
   try {
@@ -173,6 +184,13 @@ export const deleteMessage = async (req, res) => {
 
     await Messages.deleteOne({ _id: messageId });
 
+    // optionally inform sockets about deletion
+    try {
+      emitToRoom(String(message.chat), "message_deleted", { messageId, chatId: message.chat });
+    } catch (e) {
+      console.warn("emit message_deleted failed:", e?.message || e);
+    }
+
     return res.status(200).json({ message: "message deleted" });
   } catch (err) {
     console.error("error in deleteMessage:", err);
@@ -192,6 +210,13 @@ export const deleteChatMessages = async (req, res) => {
     }
 
     await Messages.deleteMany({ chat: chatId });
+
+    // optionally inform sockets
+    try {
+      emitToRoom(chatId, "chat_messages_deleted", { chatId });
+    } catch (e) {
+      console.warn("emit chat_messages_deleted failed:", e?.message || e);
+    }
 
     return res.status(200).json({ message: "chat messages deleted" });
   } catch (err) {

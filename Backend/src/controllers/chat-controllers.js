@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 import Chats from "../models/chat-models.js"; // adjust path as needed
 import Messages from "../models/message-models.js";
 import Users from "../models/user-models.js";
+import { emitToRoom, emitToUser } from "../sockets/socket.js"; // <- added
 
 const toObjectId = (id) =>
   mongoose.Types.ObjectId.isValid(id) ? mongoose.Types.ObjectId(id) : null;
@@ -105,20 +106,18 @@ export const createGroupChat = async (req, res) => {
 
     if (!Array.isArray(users))
       return res.status(400).json({ message: "users must be an array" });
+
     if (users.length < 1)
-      return res
-        .status(400)
-        .json({
-          message:
-            "need at least 2 other users to create a group (group size >=3)",
-        });
+      return res.status(400).json({
+        message: "need at least 2 other users to create a group (group size >=3)",
+      });
 
     const requesterId = req.user._id;
     const unique = Array.from(new Set(users.map((u) => String(u))));
     const allUsers = [String(requesterId), ...unique];
 
     let finalAvatar = "";
-    if (req.file) {
+    if (req.file && req.file.path) {
       finalAvatar = req.file.path;
     } else if (groupAvatar) {
       finalAvatar = groupAvatar;
@@ -132,19 +131,46 @@ export const createGroupChat = async (req, res) => {
       allUsers,
     });
 
+    if (!created) {
+      console.error("Chats.create returned falsy value", created);
+      return res
+        .status(500)
+        .json({ message: "Failed to create group chat (empty result)" });
+    }
+
+    // --- SAFE population: findById + chained populate (works consistently) ---
     const populated = await Chats.findById(created._id)
       .populate("allUsers", "-password")
       .populate("admins", "-password");
+
+    if (!populated) {
+      console.error("Population returned null for created chat id:", created._id);
+      return res.status(500).json({ message: "Failed to populate created chat" });
+    }
+
     const obj = populated.toObject();
     obj.latestMessage = null;
+
+    // Notify users (non-blocking)
+    try {
+      for (const u of obj.allUsers) {
+        const uid = String(u._id || u);
+        emitToUser(uid, "group_created", obj);
+      }
+    } catch (e) {
+      console.warn("emit group_created failed:", e?.message || e);
+    }
+
     return res.status(201).json(obj);
   } catch (err) {
-    console.error(err);
-    return res
-      .status(500)
-      .json({ message: "Server error", error: err.message });
+    console.error("createGroupChat error:", err);
+    return res.status(500).json({ message: "Server error", error: err.message });
   }
 };
+
+
+
+
 export const renameGroup = async (req, res) => {
   try {
     // ✅ make this safe even if req.body is undefined

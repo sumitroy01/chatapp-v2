@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { useRef } from "react";
+
 
 import authStore from "../store/auth.store.js";
 import chatstore from "../store/chat.store.js";
@@ -12,6 +14,7 @@ import EditGroupModal from "../components/chat/EditGroupModal.jsx";
 
 function ChatPage() {
   const { authUser } = authStore();
+  const initialAttemptRef = useRef(false);
 
   const {
     chats,
@@ -61,11 +64,18 @@ function ChatPage() {
     : null;
   const messages = activeMessagesEntry?.data || [];
 
-  useEffect(() => {
-    if (!chats.length && !isFetchingChats) {
-      fetchChats(1, limit);
-    }
-  }, [chats, isFetchingChats, fetchChats, limit]);
+  // useEffect(() => {
+  //   if (!chats.length && !isFetchingChats) {
+  //     fetchChats(1, limit);
+  //   }
+  // }, [chats, isFetchingChats, fetchChats, limit]);
+ useEffect(() => {
+  if (chats.length === 0 && !isFetchingChats) {
+    fetchChats(1, limit);
+  }
+}, [chats.length, fetchChats, limit]);
+
+
 
   useEffect(() => {
     if (selectedChat && !messagesByChat[selectedChat._id]) {

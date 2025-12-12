@@ -179,7 +179,7 @@ function ChatList({
               setMenuChatId(chat._id);
             }}
           >
-            <div className="flex items-center gap-2 w-full">
+            {/* <div className="flex items-center gap-2 w-full">
               <div className="h-8 w-8 rounded-2xl bg-gradient-to-br from-sky-500 to-violet-500 flex items-center justify-center text-[11px] font-semibold overflow-hidden shadow-sm shadow-black/40">
                 {isGroup ? (
                   "G"
@@ -192,6 +192,51 @@ function ChatList({
                 ) : (
                   name?.[0]?.toUpperCase()
                 )}
+              </div>
+
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-medium truncate text-white">
+                  {name}
+                </p>
+
+                {chat.latestMessage?.content && (
+                  <p className="text-[10px] text-neutral-400 truncate">
+                    {chat.latestMessage.content}
+                  </p>
+                )}
+              </div>
+            </div> */}
+            <div className="flex items-center gap-2 w-full">
+              <div className="h-8 w-8 rounded-2xl bg-gradient-to-br from-sky-500 to-violet-500 flex items-center justify-center text-[11px] font-semibold overflow-hidden shadow-sm shadow-black/40">
+                {(() => {
+                  const isGroup = chat.isGroupChat || chat.isGroup;
+                  const avatar = isGroup ? chat.groupAvatar : otherUser?.avatar;
+
+                  // group initials or user initials
+                  const initials = isGroup
+                    ? (
+                        (chat.chatName || chat.groupName || "Group")[0] || "G"
+                      ).toUpperCase()
+                    : (
+                        (otherUser?.userName || otherUser?.name || "U")[0] ||
+                        "U"
+                      ).toUpperCase();
+
+                  if (avatar) {
+                    return (
+                      <img
+                        src={avatar}
+                        alt={name}
+                        className="h-full w-full object-cover"
+                        onError={(e) =>
+                          (e.currentTarget.style.display = "none")
+                        }
+                      />
+                    );
+                  }
+
+                  return initials;
+                })()}
               </div>
 
               <div className="flex-1 min-w-0">

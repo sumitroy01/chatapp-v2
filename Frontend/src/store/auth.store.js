@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { axiosInstance } from "../lib/axios";
-
+import { initSocket } from "../socket";
 import toast from "react-hot-toast";
 
 const authStore = create((set, get) => ({
@@ -17,6 +17,7 @@ const authStore = create((set, get) => ({
     const res = await axiosInstance.get("/api/auth/check");
     const user = res.data;
     set({ authUser: user });
+   
   } catch {
     set({ authUser: null });
   } finally {
